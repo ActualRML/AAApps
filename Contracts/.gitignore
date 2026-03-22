@@ -1,0 +1,15 @@
+# Foundry
+lib/
+out/
+cache/
+broadcast/
+cache/
+
+# Environment Variables (PENTING!)
+.env
+
+# Snapshots
+.gas-snapshot
+
+# IDE
+.vscode/
