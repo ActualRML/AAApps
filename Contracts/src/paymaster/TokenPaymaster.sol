@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.28;
 
 import "openzeppelin-contracts/contracts/access/Ownable.sol";
 import "@chainlink/contracts/src/v0.8/shared/interfaces/AggregatorV3Interface.sol";
@@ -39,39 +39,43 @@ contract TokenPaymaster is IPaymaster, Ownable, Ev.Events {
 
     /**
      * @notice Mendapatkan harga ETH terbaru dalam unit Token.
-     * Mengasumsikan Oracle 8 desimal dan Token 18 desimal.
      */
     function getLatestPrice() public view returns (uint256) {
-        (, int price, , , ) = priceFeed.latestRoundData();
+        (, int256 price, , , ) = priceFeed.latestRoundData();
         require(price > 0, "Invalid price data");
-        // Normalisasi desimal: 8 desimal -> 18 desimal (dikali 1e10)
         return uint256(price) * 1e10;
     }
 
     /**
      * @dev Validasi User Operation oleh EntryPoint.
+     * FIX: Hapus 'view' karena kita melakukan 'transferFrom' (Pre-charge).
      */
     function validatePaymasterUserOp(
         PackedUserOperation calldata userOp,
         bytes32 /*userOpHash*/,
         uint256 maxCost
-    ) external override view returns (bytes memory context, uint256 validationData) {
+    ) external override returns (bytes memory context, uint256 validationData) {
         require(msg.sender == address(entryPoint), "Only EntryPoint");
 
         uint256 currentPrice = getLatestPrice();
-        // Estimasi token yang dibutuhkan (maxCost dalam WEI * price)
+        // 1. Hitung biaya MAKSIMAL yang mungkin terjadi (Pre-charge amount)
         uint256 maxTokenCost = (maxCost * currentPrice * gasMarkup) / (100 * 1e18);
 
-        // Cek saldo dan allowance user
+        // 2. Cek saldo dan allowance (untuk pesan error yang jelas)
         require(gasToken.balanceOf(userOp.sender) >= maxTokenCost, "Low token balance");
         require(gasToken.allowance(userOp.sender, address(this)) >= maxTokenCost, "Low token allowance");
 
-        // Kirim alamat user ke postOp via context
-        return (abi.encode(userOp.sender), 0);
+        // 3. TARIK TOKEN DI DEPAN
+        // Dengan ini, Paymaster aman meskipun user nguras saldonya saat eksekusi.
+        bool success = gasToken.transferFrom(userOp.sender, address(this), maxTokenCost);
+        require(success, "Pre-charge failed");
+
+        // 4. Kirim info user dan jumlah ditarik ke postOp via context untuk refund
+        return (abi.encode(userOp.sender, maxTokenCost), 0);
     }
 
     /**
-     * @dev Penarikan token dilakukan SETELAH transaksi sukses.
+     * @dev Penarikan token final atau pengembalian sisa (Refund).
      */
     function postOp(
         PostOpMode mode,
@@ -81,27 +85,29 @@ contract TokenPaymaster is IPaymaster, Ownable, Ev.Events {
     ) external override {
         require(msg.sender == address(entryPoint), "Only EntryPoint");
         
-        // Jika transaksi user revert total, kita tidak narik token (tergantung policy)
+        // Dekode context dari validatePaymasterUserOp
+        (address user, uint256 preChargedAmount) = abi.decode(context, (address, uint256));
+
+        // Jika mode adalah postOpReverted, EntryPoint akan mengabaikan perubahan state postOp,
+        // Tapi kita tetap punya token user dari tahap validasi.
         if (mode == PostOpMode.postOpReverted) return;
 
-        address user = abi.decode(context, (address));
         uint256 currentPrice = getLatestPrice();
+        // 5. Hitung biaya ASLI yang terpakai
+        uint256 actualTokenCost = (actualGasCost * currentPrice * gasMarkup) / (100 * 1e18);
 
-        // actualGasCost sudah dalam WEI (ETH)
-        uint256 tokenAmountToCharge = (actualGasCost * currentPrice * gasMarkup) / (100 * 1e18);
+        // 6. REFUND: Jika pre-charge > biaya asli, balikin sisanya ke user.
+        if (preChargedAmount > actualTokenCost) {
+            uint256 refundAmount = preChargedAmount - actualTokenCost;
+            // Kita pakai transfer biasa karena token sudah ada di tangan Paymaster
+            gasToken.transfer(user, refundAmount);
+        }
 
-        // Tarik token dari user ke paymaster
-        bool success = gasToken.transferFrom(user, address(this), tokenAmountToCharge);
-        require(success, "Token payment failed");
-
-        emit Ev.Events.Executed(address(this), user, tokenAmountToCharge, "Paymaster Charge", 0);
+        emit Ev.Events.Executed(address(this), user, actualTokenCost, "Paymaster Charge", 0);
     }
 
-    // --- Fungsi Admin & Saldo ---
+    // --- Fungsi Admin & Saldo (Tetap Sama) ---
 
-    /**
-     * @notice Setor ETH ke EntryPoint agar Paymaster punya saldo untuk bayar gas user.
-     */
     function deposit() external payable {
         entryPoint.depositTo{value: msg.value}(address(this));
     }
@@ -111,7 +117,6 @@ contract TokenPaymaster is IPaymaster, Ownable, Ev.Events {
     }
 
     function withdrawETH(address payable to, uint256 amount) external onlyOwner {
-        // Tarik dari deposit EntryPoint
         entryPoint.withdrawTo(to, amount);
     }
 
