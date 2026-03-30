@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-import "./ECDSA.sol";
+import {ECDSA} from "./ECDSA.sol";
 
 /**
  * @title SignatureChecker

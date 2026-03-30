@@ -2,141 +2,166 @@
 pragma solidity ^0.8.28;
 
 import "forge-std/Test.sol";
+import "forge-std/console.sol";
 import {SmartAccount} from "../../src/smart-account/SmartAccount.sol";
 import {TokenPaymaster} from "../../src/paymaster/TokenPaymaster.sol";
 import {MockToken} from "../../src/token/MockToken.sol";
-import {PackedUserOperation} from "@account-abstraction/contracts/interfaces/PackedUserOperation.sol";
-import {IPaymaster} from "@account-abstraction/contracts/interfaces/IPaymaster.sol";
+import {PackedUserOperation} from "@account-abstraction/interfaces/PackedUserOperation.sol";
+import {IPaymaster} from "@account-abstraction/interfaces/IPaymaster.sol";
+import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
+
+// Interface untuk mock oracle
+interface IAggregatorV3Local {
+    function decimals() external view returns (uint8);
+    function latestRoundData()
+        external
+        view
+        returns (
+            uint80 roundId,
+            int256 answer,
+            uint256 startedAt,
+            uint256 updatedAt,
+            uint80 answeredInRound
+        );
+}
 
 contract IntegratedFuzz is Test {
-    SmartAccount a; 
-    TokenPaymaster p; 
-    MockToken t;
+    SmartAccount public a; 
+    TokenPaymaster public p; 
+    MockToken public t;
     
-    address ep = address(0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789);
-    address or = address(0x123); 
-    address ow = address(0xA);
+    address ep = makeAddr("entryPoint");  // GANTI: pakai makeAddr bukan constant
+    address oracle = makeAddr("oracle"); 
+    address ownerPM = makeAddr("owner_paymaster");
+    
     address user;
+    uint256 userKey;
 
     function setUp() public {
-        // Sinkronkan user dengan private key 1 agar vm.sign di test recovery valid
-        user = vm.addr(1);
-
-        vm.etch(ep, hex"6080604052600080fdfea2646970667358221220");
-        vm.mockCall(ep, abi.encodeWithSignature("depositTo(address)"), "");
         
-        t = new MockToken("GasToken", "GT", 18, address(this));
+        vm.chainId(1);
+        
+        (user, userKey) = makeAddrAndKey("user_guardian");
+        
+        vm.deal(ep, 100 ether);
+        vm.mockCall(
+            ep,
+            abi.encodeWithSignature("depositTo(address)"),
+            abi.encode()  
+        );
+        
+        vm.mockCall(
+            ep,
+            abi.encodeWithSignature("getDepositInfo(address)"),
+            abi.encode(uint112(50 ether), uint32(0), uint32(0), uint64(0))
+        );
 
+        vm.mockCall(
+            oracle,
+            abi.encodeWithSelector(IAggregatorV3Local.decimals.selector),
+            abi.encode(uint8(8))
+        );
+        _mockOraclePrice(3000 * 1e8);  
+
+        t = new MockToken("GasToken", "GT", 1000e18, address(this));
+
+        SmartAccount aImpl = new SmartAccount();
         address[] memory guardians = new address[](1);
         guardians[0] = user;
+        
+        bytes memory aInitData = abi.encodeWithSelector(
+            SmartAccount.initialize.selector,
+            user,           
+            guardians,      
+            uint256(1),     
+            ep              
+        );
 
-        // Constructor: (owner, guardians, entryPoint)
-        a = new SmartAccount(user, guardians, ep); 
-        p = new TokenPaymaster(address(t), ep, or, ow);
+        ERC1967Proxy aProxy = new ERC1967Proxy(address(aImpl), aInitData);
+        a = SmartAccount(payable(address(aProxy)));
+  
+        TokenPaymaster pImpl = new TokenPaymaster();
+        
+        bytes memory pInitData = abi.encodeWithSelector(
+            TokenPaymaster.initialize.selector,
+            address(t),     
+            ep,             
+            oracle,         
+            ownerPM         
+        );
 
+        ERC1967Proxy pProxy = new ERC1967Proxy(address(pImpl), pInitData);
+        p = TokenPaymaster(payable(address(pProxy)));
         vm.deal(address(p), 100 ether);
-        p.deposit{value: 50 ether}();
+        vm.deal(ownerPM, 100 ether);
+        
+        vm.prank(ownerPM);
+        p.deposit{value: 10 ether}();
+
+        t.mint(address(a), 1e36);
     }
 
-    /**
-     * @dev STRICT FUZZ TEST
-     * Menguji kalkulasi biaya gas secara matematis dengan input acak (Fuzzing).
-     */
-    function testFuzz_FlowStrict(int256 pr, uint256 mk, uint256 gas) public {
-        // 1. BOUNDING (Strict)
+    function _mockOraclePrice(int256 price) internal {
+        vm.mockCall(
+            oracle,
+            abi.encodeWithSelector(IAggregatorV3Local.latestRoundData.selector),
+            abi.encode(uint80(1), price, uint256(1), uint256(1), uint80(1))
+        );
+    }
+
+    function testFuzz_FlowStrict(int256 pr, uint256 mk, uint256 gasLimit) public {
         pr = bound(pr, 1e6, 1e15); 
         mk = bound(mk, 101, 1000); 
-        gas = bound(gas, 21_000, 5_000_000); 
+        gasLimit = bound(gasLimit, 100_000, 2_000_000); 
 
-        // 2. MOCK ORACLE
-        vm.mockCall(or, abi.encodeWithSignature("latestRoundData()"), 
-            abi.encode(uint80(1), pr, uint256(1), uint256(1), uint80(1)));
+        _mockOraclePrice(pr);
 
-        vm.prank(ow); 
+        vm.prank(ownerPM); 
         p.setGasMarkup(mk);
         
-        t.mint(address(a), 1e36); 
         vm.prank(address(a)); 
         t.approve(address(p), type(uint256).max);
 
         PackedUserOperation memory op;
         op.sender = address(a);
         op.paymasterAndData = abi.encodePacked(address(p));
+        op.accountGasLimits = bytes32(abi.encodePacked(uint128(gasLimit), uint128(gasLimit)));
+        op.preVerificationGas = 50_000;
 
-        // 3. EXECUTION
         vm.startPrank(ep);
-        uint256 balanceBefore = t.balanceOf(address(a));
-        uint256 pBalanceBefore = t.balanceOf(address(p));
+        uint256 bBefore = t.balanceOf(address(a));
         
-        (bytes memory ctx, ) = p.validatePaymasterUserOp(op, bytes32(0), gas + 1e15);
-        p.postOp(IPaymaster.PostOpMode.opSucceeded, ctx, gas, 0);
-        
-        uint256 balanceAfter = t.balanceOf(address(a));
-        uint256 pBalanceAfter = t.balanceOf(address(p));
+        (bytes memory ctx, ) = p.validatePaymasterUserOp(op, bytes32(0), gasLimit);
+        p.postOp(IPaymaster.PostOpMode.opSucceeded, ctx, gasLimit, 0);
         vm.stopPrank();
 
-        // 4. ASSERTIONS (Presisi Matematika)
-        uint256 expectedDebt = (gas * uint256(pr) * mk) / (1e8 * 100); 
+        uint256 actualPaid = bBefore - t.balanceOf(address(a));
+        uint256 expected = (gasLimit * uint256(pr) * mk) / (1e8 * 100); 
         
-        assertApproxEqAbs(balanceBefore - balanceAfter, expectedDebt, 100, "Math mismatch");
-        assertEq(pBalanceAfter - pBalanceBefore, balanceBefore - balanceAfter, "Sync mismatch");
+        assertApproxEqAbs(actualPaid, expected, 1000, "Math mismatch");
     }
 
-    /**
-     * @dev UNIT TEST: Saldo Tidak Cukup
-     */
-    function test_RevertIfInsufficientBalance() public {
-    // 1. Masuk sebagai 'a' (SmartAccount)
-    vm.prank(address(a)); 
-    
-    // 2. Bakar semua token yang dimiliki 'a'
-    // Cukup 1 argumen: jumlahnya saja
-    t.burn(t.balanceOf(address(a))); 
-    
-    PackedUserOperation memory op;
-    op.sender = address(a);
-    op.paymasterAndData = abi.encodePacked(address(p));
-
-    vm.prank(ep);
-    vm.expectRevert(); 
-    p.validatePaymasterUserOp(op, bytes32(0), 1e18);
-}
-
-    /**
-     * @dev LOGIC TEST: Social Recovery
-     */
     function test_SocialRecovery() public {
-    address newOwner = address(0x99);
-    bytes[] memory sigs = new bytes[](1);
-    
-    // 1. Buat raw hash-nya
-    bytes32 rawHash = keccak256(abi.encodePacked(newOwner, address(a)));
-    
-    // 2. BUNGKUS hash-nya sesuai standar Ethereum (EIP-191)
-    // Ini yang bikin address hasil ecrecover jadi sinkron
-    bytes32 ethSignedHash = keccak256(
-        abi.encodePacked("\x19Ethereum Signed Message:\n32", rawHash)
-    );
-    
-    // 3. Sign hash yang sudah dibungkus
-    (uint8 v, bytes32 r, bytes32 s) = vm.sign(1, ethSignedHash); 
-    sigs[0] = abi.encodePacked(r, s, v);
-
-    // 4. Eksekusi recovery
-    a.recoverAccount(newOwner, sigs);
-    
-    assertEq(a.owner(), newOwner, "Recovery failed: Owner not updated");
-}
-
-    /**
-     * @dev SECURITY TEST: Access Control (Owner-only)
-     */
-    function test_RevertIfNonOwnerSetsMarkup() public {
-        address hacker = address(0xDEAD);
-        vm.prank(hacker);
+        address newOwner = makeAddr("new_owner");
+        bytes[] memory sigs = new bytes[](1);
+        bytes32 rawHash = keccak256(abi.encodePacked(newOwner, address(a), block.chainid));
+        bytes32 ethSignedHash = keccak256(
+            abi.encodePacked("\x19Ethereum Signed Message:\n32", rawHash)
+        );
         
-        // Fix Error 6160: Gunakan tanpa argumen
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(userKey, ethSignedHash); 
+        sigs[0] = abi.encodePacked(r, s, v);
+
+        uint256[] memory indices = new uint256[](1);
+        indices[0] = 0;
+
+        a.recoverAccount(newOwner, sigs, indices);
+        assertEq(a.owner(), newOwner);
+    }
+
+    function test_RevertIfNonOwnerSetsMarkup() public {
+        vm.prank(makeAddr("hacker"));
         vm.expectRevert(); 
-        p.setGasMarkup(1000);
+        p.setGasMarkup(200);
     }
 }

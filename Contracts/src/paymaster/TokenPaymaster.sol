@@ -1,81 +1,100 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-import "openzeppelin-contracts/contracts/access/Ownable.sol";
-import "@chainlink/contracts/src/v0.8/shared/interfaces/AggregatorV3Interface.sol";
-import "@account-abstraction/contracts/interfaces/IPaymaster.sol";
-import "@account-abstraction/contracts/interfaces/IEntryPoint.sol";
-import "../token/MockToken.sol";
-import "../events/Events.sol" as Ev;
+import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+
+import {AggregatorV3Interface} from "@chainlink/contracts/src/v0.8/shared/interfaces/AggregatorV3Interface.sol";
+import {IPaymaster} from "@account-abstraction/interfaces/IPaymaster.sol";
+import {IEntryPoint} from "@account-abstraction/interfaces/IEntryPoint.sol";
+import {PackedUserOperation} from "@account-abstraction/interfaces/PackedUserOperation.sol";
+
+import {MockToken} from "../token/MockToken.sol";
+import {Errors} from "../common/Errors.sol";
+import "../common/Events.sol" as Ev;
 
 /**
  * @title TokenPaymaster
- * @notice Menangani pembayaran gas menggunakan MockToken dengan kurs real-time dari Oracle Chainlink.
+ * @notice Versi Upgradeable/Proxy-ready. Bayar gas pake MockToken via Oracle Chainlink.
+ * @dev Fee markup otomatis tersimpan di saldo gasToken kontrak ini.
  */
-contract TokenPaymaster is IPaymaster, Ownable, Ev.Events {
-    MockToken public immutable gasToken;
-    IEntryPoint public immutable entryPoint;
-    AggregatorV3Interface internal immutable priceFeed;
+contract TokenPaymaster is Initializable, OwnableUpgradeable, IPaymaster, Ev.Events {
+    // Variabel storage untuk Proxy
+    MockToken public gasToken;
+    IEntryPoint public entryPoint;
+    AggregatorV3Interface internal priceFeed;
 
-    uint256 public gasMarkup = 110; // 110 = 10% profit/buffer
+    uint256 public gasMarkup; 
     uint256 public constant PAYMASTER_OVERHEAD = 21000;
 
-    constructor(
+    /// @custom:oz-upgrades-unsafe-allow constructor
+    constructor() {
+        _disableInitializers(); 
+    }
+
+    /**
+     * @notice Pengganti constructor untuk pola Proxy
+     */
+    function initialize(
         address _gasToken, 
         address _entryPoint, 
         address _priceFeed,
         address _initialOwner
-    ) Ownable(_initialOwner) {
+    ) public initializer {
+        __Ownable_init(_initialOwner); 
+        
         gasToken = MockToken(_gasToken);
         entryPoint = IEntryPoint(_entryPoint);
         priceFeed = AggregatorV3Interface(_priceFeed);
+        gasMarkup = 110; // Default 10% fee markup
     }
 
-    /// @notice Update persentase markup (hanya admin)
+    // ============ CONFIGURATION ============
+
     function setGasMarkup(uint256 _newMarkup) external onlyOwner {
-        require(_newMarkup >= 100, "Markup too low");
+        if (_newMarkup < 100) revert Errors.MarkupTooLow();
         gasMarkup = _newMarkup;
     }
 
     /**
-     * @notice Mendapatkan harga ETH terbaru dalam unit Token.
+     * @notice Ambil harga token vs ETH dari Chainlink (8 decimals -> 18 decimals)
      */
     function getLatestPrice() public view returns (uint256) {
         (, int256 price, , , ) = priceFeed.latestRoundData();
-        require(price > 0, "Invalid price data");
-        return uint256(price) * 1e10;
+        
+        // Fix warning [unsafe-typecast]: Check sebelum cast ke uint256
+        if (price <= 0) revert Errors.InvalidPriceData();
+
+        // forge-lint: disable-next-line(unsafe-typecast)
+        return uint256(price) * 1e10; 
     }
 
+    // ============ ERC-4337 CORE ============
+
     /**
-     * @dev Validasi User Operation oleh EntryPoint.
-     * FIX: Hapus 'view' karena kita melakukan 'transferFrom' (Pre-charge).
+     * @dev Validasi User Op: Pre-charge token dari wallet user ke Paymaster.
      */
     function validatePaymasterUserOp(
         PackedUserOperation calldata userOp,
         bytes32 /*userOpHash*/,
         uint256 maxCost
     ) external override returns (bytes memory context, uint256 validationData) {
-        require(msg.sender == address(entryPoint), "Only EntryPoint");
+        if (msg.sender != address(entryPoint)) revert Errors.NotEntryPoint();
 
         uint256 currentPrice = getLatestPrice();
-        // 1. Hitung biaya MAKSIMAL yang mungkin terjadi (Pre-charge amount)
+        // Rumus: (ETH_Cost * Token_Price * Markup) / Scaler
         uint256 maxTokenCost = (maxCost * currentPrice * gasMarkup) / (100 * 1e18);
 
-        // 2. Cek saldo dan allowance (untuk pesan error yang jelas)
-        require(gasToken.balanceOf(userOp.sender) >= maxTokenCost, "Low token balance");
-        require(gasToken.allowance(userOp.sender, address(this)) >= maxTokenCost, "Low token allowance");
+        // Pre-charge: Cek return value transferFrom (Fix warning erc20-unchecked-transfer)
+        if (!gasToken.transferFrom(userOp.sender, address(this), maxTokenCost)) {
+            revert Errors.PreChargeFailed();
+        }
 
-        // 3. TARIK TOKEN DI DEPAN
-        // Dengan ini, Paymaster aman meskipun user nguras saldonya saat eksekusi.
-        bool success = gasToken.transferFrom(userOp.sender, address(this), maxTokenCost);
-        require(success, "Pre-charge failed");
-
-        // 4. Kirim info user dan jumlah ditarik ke postOp via context untuk refund
         return (abi.encode(userOp.sender, maxTokenCost), 0);
     }
 
     /**
-     * @dev Penarikan token final atau pengembalian sisa (Refund).
+     * @dev postOp: Hitung biaya asli dan kasih Refund sisa token ke user.
      */
     function postOp(
         PostOpMode mode,
@@ -83,40 +102,44 @@ contract TokenPaymaster is IPaymaster, Ownable, Ev.Events {
         uint256 actualGasCost,
         uint256 /*actualUserOpFeePerGas*/
     ) external override {
-        require(msg.sender == address(entryPoint), "Only EntryPoint");
+        if (msg.sender != address(entryPoint)) revert Errors.NotEntryPoint();
         
-        // Dekode context dari validatePaymasterUserOp
         (address user, uint256 preChargedAmount) = abi.decode(context, (address, uint256));
 
-        // Jika mode adalah postOpReverted, EntryPoint akan mengabaikan perubahan state postOp,
-        // Tapi kita tetap punya token user dari tahap validasi.
         if (mode == PostOpMode.postOpReverted) return;
 
         uint256 currentPrice = getLatestPrice();
-        // 5. Hitung biaya ASLI yang terpakai
         uint256 actualTokenCost = (actualGasCost * currentPrice * gasMarkup) / (100 * 1e18);
 
-        // 6. REFUND: Jika pre-charge > biaya asli, balikin sisanya ke user.
         if (preChargedAmount > actualTokenCost) {
-            uint256 refundAmount = preChargedAmount - actualTokenCost;
-            // Kita pakai transfer biasa karena token sudah ada di tangan Paymaster
-            gasToken.transfer(user, refundAmount);
+            unchecked {
+                uint256 refundAmount = preChargedAmount - actualTokenCost;
+                // Fix warning erc20-unchecked-transfer
+                if (!gasToken.transfer(user, refundAmount)) revert Errors.TransferFailed();
+            }
         }
 
-        emit Ev.Events.Executed(address(this), user, actualTokenCost, "Paymaster Charge", 0);
+        emit Ev.Events.PaymasterCharge(address(this), user, actualTokenCost, "Gas Fee + Markup");
     }
 
-    // --- Fungsi Admin & Saldo (Tetap Sama) ---
+    // ============ ADMIN & FEE MANAGEMENT ============
+
+    function getInternalBalance() external view returns (uint256) {
+        return gasToken.balanceOf(address(this));
+    }
+
+    function withdrawToken(address to, uint256 amount) external onlyOwner {
+        if (!gasToken.transfer(to, amount)) revert Errors.WithdrawFailed();
+    }
 
     function deposit() external payable {
         entryPoint.depositTo{value: msg.value}(address(this));
     }
 
-    function withdrawToken(address to, uint256 amount) external onlyOwner {
-        require(gasToken.transfer(to, amount), "Transfer failed");
-    }
-
-    function withdrawETH(address payable to, uint256 amount) external onlyOwner {
+    /**
+     * @notice Fix note [mixed-case-function]: ETH -> Eth
+     */
+    function withdrawEth(address payable to, uint256 amount) external onlyOwner {
         entryPoint.withdrawTo(to, amount);
     }
 

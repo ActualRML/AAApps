@@ -2,7 +2,7 @@
 pragma solidity ^0.8.28;
 
 import {MockToken} from "./MockToken.sol";
-import {Events} from "../events/Events.sol";
+import {Events} from "../common/Events.sol";
 
 contract TokenFactory is Events {
     address[] public allTokens;

@@ -1,57 +1,50 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-import "./SmartAccount.sol";
+import {SmartAccount} from "./SmartAccount.sol";
+import {Errors} from "../common/Errors.sol";
+import {Clones} from "@openzeppelin/contracts/proxy/Clones.sol";
 
 contract SmartAccountFactory {
-    address public immutable entryPoint;
-
-    constructor(address _entryPoint) {
-        entryPoint = _entryPoint;
+    address public immutable ENTRY_POINT;
+    address public immutable IMPLEMENTATION;
+    
+    constructor(address _entryPoint) payable {
+        if (_entryPoint == address(0)) revert Errors.ZeroAddress();
+        ENTRY_POINT = _entryPoint;
+        IMPLEMENTATION = address(new SmartAccount());
     }
 
     function createAccount(
         address owner,
-        address[] memory guardians,
+        address[] calldata guardians,
+        uint256 threshold,
         uint256 salt
-    ) external returns (SmartAccount) {
-        // 🔥 VALIDASI: Minimal harus ada 1 guardian biar ga deadlock
-        require(guardians.length > 0, "At least one guardian required");
+    ) external payable returns (address account) {
+        if (owner == address(0)) revert Errors.ZeroAddress();
         
-        address addr = getAddress(owner, guardians, salt);
-        uint256 codeSize = addr.code.length;
-        if (codeSize > 0) {
-            return SmartAccount(payable(addr));
+        bytes32 finalSalt = keccak256(abi.encode(owner, salt));
+        account = Clones.predictDeterministicAddress(IMPLEMENTATION, finalSalt, address(this));
+        
+        // Cek apakah sudah deploy
+        if (account.code.length > 0) {
+            return account;
         }
 
-        // Pakai keccak256(owner, salt) sebagai salt asli CREATE2 
-        // Biar alamat unik per owner meskipun angka salt-nya sama
-        bytes32 finalSalt = keccak256(abi.encode(owner, salt));
+        // Deploy menggunakan library Clones (EIP-1167 + CREATE2)
+        account = Clones.cloneDeterministic(IMPLEMENTATION, finalSalt);
 
-        return new SmartAccount{salt: finalSalt}(owner, guardians, entryPoint);
+        // Langsung panggil pengecekan threshold sebelum initialize
+        if (threshold == 0 || threshold > guardians.length) revert Errors.InvalidThreshold();
+
+        // Initialize state
+        SmartAccount(payable(account)).initialize(owner, guardians, threshold, ENTRY_POINT);
+        
+        return account;
     }
 
-    function getAddress(
-        address owner,
-        address[] memory guardians,
-        uint256 salt
-    ) public view returns (address) {
-        bytes memory bytecode = abi.encodePacked(
-            type(SmartAccount).creationCode,
-            abi.encode(owner, guardians, entryPoint)
-        );
-        
+    function getAddress(address owner, uint256 salt) public view returns (address predicted) {
         bytes32 finalSalt = keccak256(abi.encode(owner, salt));
-
-        bytes32 hash = keccak256(
-            abi.encodePacked(
-                bytes1(0xff),
-                address(this),
-                finalSalt,
-                keccak256(bytecode)
-            )
-        );
-
-        return address(uint160(uint256(hash)));
+        return Clones.predictDeterministicAddress(IMPLEMENTATION, finalSalt, address(this));
     }
 }
