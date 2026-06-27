@@ -1,15 +1,11 @@
 # Foundry
-lib/
+# NOTE: lib/ is tracked via git submodules; .gas-snapshot is tracked for `forge snapshot --check`.
 out/
 cache/
 broadcast/
-cache/
 
 # Environment Variables (PENTING!)
 .env
-
-# Snapshots
-.gas-snapshot
 
 # IDE
 .vscode/

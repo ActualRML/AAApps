@@ -20,13 +20,11 @@ contract MockV3Aggregator {
     }
 
     // Fungsi ini yang bakal dipanggil sama TokenPaymaster.sol
-    function latestRoundData() external view returns (
-        uint80 roundId,
-        int256 answer,
-        uint256 startedAt,
-        uint256 updatedAt,
-        uint80 answeredInRound
-    ) {
+    function latestRoundData()
+        external
+        view
+        returns (uint80 roundId, int256 answer, uint256 startedAt, uint256 updatedAt, uint80 answeredInRound)
+    {
         // Kita cuma peduli sama 'answer' (harganya), sisanya kasih 0 aja gak apa-apa.
         return (0, latestAnswer, 0, 0, 0);
     }

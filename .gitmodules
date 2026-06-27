@@ -1,3 +1,15 @@
+[submodule "Contracts/lib/forge-std"]
+	path = Contracts/lib/forge-std
+	url = https://github.com/foundry-rs/forge-std
+[submodule "Contracts/lib/openzeppelin-contracts"]
+	path = Contracts/lib/openzeppelin-contracts
+	url = https://github.com/OpenZeppelin/openzeppelin-contracts
 [submodule "Contracts/lib/openzeppelin-contracts-upgradeable"]
 	path = Contracts/lib/openzeppelin-contracts-upgradeable
-	url = https://github.com/openzeppelin/openzeppelin-contracts-upgradeable
+	url = https://github.com/OpenZeppelin/openzeppelin-contracts-upgradeable
+[submodule "Contracts/lib/account-abstraction"]
+	path = Contracts/lib/account-abstraction
+	url = https://github.com/eth-infinitism/account-abstraction
+[submodule "Contracts/lib/chainlink-brownie-contracts"]
+	path = Contracts/lib/chainlink-brownie-contracts
+	url = https://github.com/smartcontractkit/chainlink-brownie-contracts

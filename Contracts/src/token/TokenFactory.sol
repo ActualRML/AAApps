@@ -6,24 +6,18 @@ import {Events} from "../common/Events.sol";
 
 contract TokenFactory is Events {
     address[] public allTokens;
-    
+
     // Gunakan hash dari simbol jika ingin tetap unik berdasarkan nama/simbol
     mapping(bytes32 => address) public tokenByHash;
 
-    function createToken(
-        string calldata name,
-        string calldata symbol,
-        uint256 initialSupply
-    ) external returns (address) {
+    function createToken(string calldata name, string calldata symbol, uint256 initialSupply)
+        external
+        returns (address)
+    {
         bytes32 symbolHash = keccak256(abi.encodePacked(symbol));
         require(tokenByHash[symbolHash] == address(0), "Symbol already exists");
 
-        MockToken token = new MockToken(
-            name,
-            symbol,
-            initialSupply,
-            msg.sender
-        );
+        MockToken token = new MockToken(name, symbol, initialSupply, msg.sender);
 
         address tokenAddress = address(token);
         allTokens.push(tokenAddress);

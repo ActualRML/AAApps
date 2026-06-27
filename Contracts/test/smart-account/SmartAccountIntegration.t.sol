@@ -1,17 +1,17 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-import "forge-std/Test.sol";
-import "../../src/smart-account/SmartAccount.sol";
-import "../../src/smart-account/SmartAccountFactory.sol";
-import "../../src/common/Errors.sol"; 
+import {Test} from "forge-std/Test.sol";
+import {SmartAccount} from "../../src/smart-account/SmartAccount.sol";
+import {SmartAccountFactory} from "../../src/smart-account/SmartAccountFactory.sol";
+import {Errors} from "../../src/common/Errors.sol";
 
 /**
  * @dev Kontrak pembantu buat ngetes bubble revert
  */
 contract RevertingContract {
     error CustomTargetError(string message);
-    
+
     function failWithMessage() external pure {
         revert CustomTargetError("Target contract failed!");
     }
@@ -21,7 +21,7 @@ contract SmartAccountIntegrationTest is Test {
     SmartAccountFactory factory;
     SmartAccount account;
     RevertingContract revertingContract;
-    
+
     address owner;
     address payable receiver;
     address entryPoint = address(0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789);
@@ -30,16 +30,16 @@ contract SmartAccountIntegrationTest is Test {
         owner = makeAddr("owner");
         receiver = payable(makeAddr("receiver"));
         revertingContract = new RevertingContract();
-        
+
         factory = new SmartAccountFactory(entryPoint);
-        
+
         address[] memory guardians = new address[](1);
         guardians[0] = makeAddr("guardian");
-        
+
         address accountAddr = factory.createAccount(owner, guardians, 1, 123);
         account = SmartAccount(payable(accountAddr));
-        
-        vm.deal(address(account), 10 ether); 
+
+        vm.deal(address(account), 10 ether);
     }
 
     // ============ HAPPY PATH ============
@@ -109,15 +109,15 @@ contract SmartAccountIntegrationTest is Test {
      * @notice Mastiin assembly InsufficientBalance lo jalan
      */
     function test_Revert_InsufficientBalance() public {
-    vm.prank(owner);
-    
-    // Cara paling aman buat nangkep assembly revert yang "raw"
-    vm.expectRevert(); 
-    account.execute(receiver, 100 ether, "");
-    
-    // Verifikasi saldo tidak berubah (Safety check)
-    assertEq(address(account).balance, 10 ether);
-}
+        vm.prank(owner);
+
+        // Cara paling aman buat nangkep assembly revert yang "raw"
+        vm.expectRevert();
+        account.execute(receiver, 100 ether, "");
+
+        // Verifikasi saldo tidak berubah (Safety check)
+        assertEq(address(account).balance, 10 ether);
+    }
 
     /**
      * @notice Mastiin pesan error dari kontrak target "nembus" ke luar (Bubble Revert)
@@ -126,7 +126,9 @@ contract SmartAccountIntegrationTest is Test {
         vm.prank(owner);
         // Kita expect error dari RevertingContract bukan dari SmartAccount
         vm.expectRevert(abi.encodeWithSelector(RevertingContract.CustomTargetError.selector, "Target contract failed!"));
-        account.execute(address(revertingContract), 0, abi.encodeWithSelector(RevertingContract.failWithMessage.selector));
+        account.execute(
+            address(revertingContract), 0, abi.encodeWithSelector(RevertingContract.failWithMessage.selector)
+        );
     }
 
     /**

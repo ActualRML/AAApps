@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-import "forge-std/Test.sol";
-import "../../src/smart-account/SmartAccountFactory.sol";
-import "../../src/smart-account/SmartAccount.sol";
-import "../../src/common/Errors.sol"; 
+import {Test} from "forge-std/Test.sol";
+import {SmartAccountFactory} from "../../src/smart-account/SmartAccountFactory.sol";
+import {SmartAccount} from "../../src/smart-account/SmartAccount.sol";
+import {Errors} from "../../src/common/Errors.sol";
 
 contract SmartAccountFactoryTest is Test {
     SmartAccountFactory public factory;
@@ -28,12 +28,12 @@ contract SmartAccountFactoryTest is Test {
         vm.assume(randomOwner != address(0));
 
         address predicted = factory.getAddress(randomOwner, randomSalt);
-        
+
         // Deploy dengan threshold standar 1
         address deployed = factory.createAccount(randomOwner, guardians, 1, randomSalt);
 
         assertEq(predicted, deployed, "Deterministic address mismatch!");
-        
+
         // Verifikasi owner di storage akun yang baru lahir
         assertEq(SmartAccount(payable(deployed)).owner(), randomOwner, "Owner state mismatch!");
     }
@@ -44,7 +44,7 @@ contract SmartAccountFactoryTest is Test {
     function test_StateInitialization() public {
         uint256 salt = 420;
         uint256 threshold = 2;
-        
+
         address accountAddr = factory.createAccount(owner, guardians, threshold, salt);
         SmartAccount account = SmartAccount(payable(accountAddr));
 
@@ -53,7 +53,7 @@ contract SmartAccountFactoryTest is Test {
         assertEq(address(account.entryPoint()), entryPoint, "EntryPoint not set");
         assertEq(account.recoveryThreshold(), threshold, "Threshold not set");
         assertEq(account.guardianCount(), guardians.length, "Guardian count mismatch");
-        
+
         // Cek apakah guardianIndex terisi (guardianIndex mulai dari 1)
         assertTrue(account.guardianIndex(guardians[0]) > 0, "Guardian 1 not indexed");
         assertTrue(account.guardianIndex(guardians[1]) > 0, "Guardian 2 not indexed");
@@ -73,7 +73,7 @@ contract SmartAccountFactoryTest is Test {
     function test_MaxThreshold() public {
         uint256 maxThreshold = guardians.length;
         address accountAddr = factory.createAccount(owner, guardians, maxThreshold, 777);
-        
+
         assertEq(SmartAccount(payable(accountAddr)).recoveryThreshold(), maxThreshold);
     }
 
@@ -96,7 +96,7 @@ contract SmartAccountFactoryTest is Test {
      */
     function test_Idempotency() public {
         uint256 salt = 1337;
-        
+
         address first = factory.createAccount(owner, guardians, 1, salt);
         address second = factory.createAccount(owner, guardians, 1, salt);
 

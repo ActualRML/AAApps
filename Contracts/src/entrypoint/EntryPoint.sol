@@ -11,7 +11,7 @@ import {SmartAccount} from "../smart-account/SmartAccount.sol";
  */
 contract EntryPoint {
     // ============ STORAGE ============
-    
+
     mapping(address => uint256) public balances;
 
     // ============ EVENTS ============
@@ -39,7 +39,9 @@ contract EntryPoint {
         uint256 nonce,
         bytes calldata signature
     ) external {
-        try SmartAccount(sender).executeWithSignature(target, value, data, nonce, signature) returns (bytes memory result) {
+        try SmartAccount(sender).executeWithSignature(target, value, data, nonce, signature) returns (
+            bytes memory result
+        ) {
             emit OpsExecuted(sender, true, result);
         } catch (bytes memory lowLevelData) {
             emit OpsExecuted(sender, false, lowLevelData);
@@ -71,12 +73,12 @@ contract EntryPoint {
     function withdrawTo(address payable to, uint256 amount) external {
         uint256 balance = balances[msg.sender];
         if (balance < amount) revert("Insufficient balance");
-        
+
         balances[msg.sender] = balance - amount;
-        
-        (bool success, ) = to.call{value: amount}("");
+
+        (bool success,) = to.call{value: amount}("");
         require(success, "Transfer failed");
-        
+
         emit Withdrawn(msg.sender, to, amount);
     }
 

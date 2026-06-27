@@ -24,25 +24,23 @@ contract TokenPaymaster is Initializable, OwnableUpgradeable, IPaymaster, Ev.Eve
     IEntryPoint public entryPoint;
     AggregatorV3Interface internal priceFeed;
 
-    uint256 public gasMarkup; 
+    uint256 public gasMarkup;
     uint256 public constant PAYMASTER_OVERHEAD = 21000;
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
-        _disableInitializers(); 
+        _disableInitializers();
     }
 
     /**
      * @notice Pengganti constructor untuk pola Proxy
      */
-    function initialize(
-        address _gasToken, 
-        address _entryPoint, 
-        address _priceFeed,
-        address _initialOwner
-    ) public initializer {
-        __Ownable_init(_initialOwner); 
-        
+    function initialize(address _gasToken, address _entryPoint, address _priceFeed, address _initialOwner)
+        public
+        initializer
+    {
+        __Ownable_init(_initialOwner);
+
         gasToken = MockToken(_gasToken);
         entryPoint = IEntryPoint(_entryPoint);
         priceFeed = AggregatorV3Interface(_priceFeed);
@@ -60,13 +58,13 @@ contract TokenPaymaster is Initializable, OwnableUpgradeable, IPaymaster, Ev.Eve
      * @notice Ambil harga token vs ETH dari Chainlink (8 decimals -> 18 decimals)
      */
     function getLatestPrice() public view returns (uint256) {
-        (, int256 price, , , ) = priceFeed.latestRoundData();
-        
+        (, int256 price,,,) = priceFeed.latestRoundData();
+
         // Fix warning [unsafe-typecast]: Check sebelum cast ke uint256
         if (price <= 0) revert Errors.InvalidPriceData();
 
         // forge-lint: disable-next-line(unsafe-typecast)
-        return uint256(price) * 1e10; 
+        return uint256(price) * 1e10;
     }
 
     // ============ ERC-4337 CORE ============
@@ -76,9 +74,14 @@ contract TokenPaymaster is Initializable, OwnableUpgradeable, IPaymaster, Ev.Eve
      */
     function validatePaymasterUserOp(
         PackedUserOperation calldata userOp,
-        bytes32 /*userOpHash*/,
+        bytes32,
+        /*userOpHash*/
         uint256 maxCost
-    ) external override returns (bytes memory context, uint256 validationData) {
+    )
+        external
+        override
+        returns (bytes memory context, uint256 validationData)
+    {
         if (msg.sender != address(entryPoint)) revert Errors.NotEntryPoint();
 
         uint256 currentPrice = getLatestPrice();
@@ -101,9 +104,12 @@ contract TokenPaymaster is Initializable, OwnableUpgradeable, IPaymaster, Ev.Eve
         bytes calldata context,
         uint256 actualGasCost,
         uint256 /*actualUserOpFeePerGas*/
-    ) external override {
+    )
+        external
+        override
+    {
         if (msg.sender != address(entryPoint)) revert Errors.NotEntryPoint();
-        
+
         (address user, uint256 preChargedAmount) = abi.decode(context, (address, uint256));
 
         if (mode == PostOpMode.postOpReverted) return;

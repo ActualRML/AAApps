@@ -11,9 +11,8 @@ optimizer_runs = 1000
 
 ignored_error_codes = [2394]
 
-[dependencies]
-account-abstraction = { version = "0.7.0", url = "https://github.com/eth-infinitism/account-abstraction.git" }
-openzeppelin-contracts = { version = "5.0.2", url = "https://github.com/OpenZeppelin/openzeppelin-contracts.git" }
+# Dependencies are managed as git submodules under lib/ (see remappings.txt and .gitmodules).
+# Run `git submodule update --init --recursive` after cloning.
 
 [rpc_endpoints]
 base_sepolia = "https://sepolia.base.org"

@@ -8,8 +8,11 @@ on:
   pull_request:
   workflow_dispatch:
 
-env:
-  FOUNDRY_PROFILE: ci
+# The Foundry project lives in the Contracts/ subdirectory, so all `run` steps
+# execute there. (`uses` steps such as checkout still run from the repo root.)
+defaults:
+  run:
+    working-directory: Contracts
 
 jobs:
   check:

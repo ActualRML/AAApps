@@ -1,9 +1,9 @@
 # Foundry (Smart Contracts)
+# NOTE: lib/ is intentionally NOT ignored — dependencies are tracked as git submodules.
+# NOTE: .gas-snapshot is intentionally tracked so `forge snapshot --check` is reproducible.
 Contracts/out/
 Contracts/cache/
-Contracts/lib/
 Contracts/broadcast/
-.gas-snapshot
 
 # Node.js (Frontend/Backend)
 node_modules/

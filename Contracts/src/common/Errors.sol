@@ -24,8 +24,8 @@ interface Errors {
     error InsufficientBalance();
 
     // ============ SmartAccountFactory Errors ============
-    error DeploymentFailed();   
-    error NoGuardians();      
+    error DeploymentFailed();
+    error NoGuardians();
     error ArrayMismatch();
 
     // ============ Paymaster Errors ============
@@ -35,4 +35,4 @@ interface Errors {
     error MarkupTooLow();
     error TransferFailed();
     error WithdrawFailed();
-}   
+}

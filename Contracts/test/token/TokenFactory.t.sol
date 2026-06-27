@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-import "forge-std/Test.sol";
+import {Test} from "forge-std/Test.sol";
 import {TokenFactory} from "../../src/token/TokenFactory.sol";
 import {MockToken} from "../../src/token/MockToken.sol";
 
@@ -56,7 +56,7 @@ contract TokenFactoryTest is Test {
         vm.prank(user2);
         vm.expectRevert(); // Harusnya gagal karena bukan owner
         token.mint(user2, 1_000_000 ether);
-        
+
         assertEq(token.balanceOf(user2), 0, "Stranger successfully minted tokens!");
     }
 
@@ -80,11 +80,11 @@ contract TokenFactoryTest is Test {
     function testFuzz_CreateToken(string memory name, string memory symbol, uint256 amount) public {
         // Constraints: Simbol jangan kosong dan jangan kepanjangan, amount realistis
         vm.assume(bytes(symbol).length > 0 && bytes(symbol).length < 32);
-        vm.assume(amount > 0 && amount < 1e36); 
+        vm.assume(amount > 0 && amount < 1e36);
 
         vm.prank(user1);
         address tokenAddr = factory.createToken(name, symbol, amount);
-        
+
         MockToken token = MockToken(tokenAddr);
         assertEq(token.symbol(), symbol);
         assertEq(token.owner(), user1);
@@ -105,10 +105,10 @@ contract TokenFactoryTest is Test {
      */
     function test_SymbolCaseSensitivity() public {
         factory.createToken("Token 1", "mETH", 1000 ether);
-        
+
         // Harusnya berhasil karena hash-nya berbeda
         address token2 = factory.createToken("Token 2", "METH", 1000 ether);
-        
+
         assertTrue(token2 != address(0));
         assertEq(factory.getTokensCount(), 2);
     }

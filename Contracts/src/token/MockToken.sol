@@ -14,15 +14,10 @@ contract MockToken is ERC20, Events {
     }
 
     function _onlyOwner() internal view {
-        if (msg.sender != owner) revert Errors.NotOwner(); 
+        if (msg.sender != owner) revert Errors.NotOwner();
     }
 
-    constructor(
-        string memory name,
-        string memory symbol,
-        uint256 initialSupply,
-        address _owner
-    ) ERC20(name, symbol) {
+    constructor(string memory name, string memory symbol, uint256 initialSupply, address _owner) ERC20(name, symbol) {
         owner = _owner;
         if (initialSupply > 0) {
             _mint(_owner, initialSupply);

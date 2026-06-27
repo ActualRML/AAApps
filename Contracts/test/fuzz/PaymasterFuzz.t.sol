@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.28;
 
-import "forge-std/Test.sol";
-import "../../src/paymaster/TokenPaymaster.sol";
-import "../../src/token/MockToken.sol";
-import "@account-abstraction/interfaces/PackedUserOperation.sol";
+import {Test} from "forge-std/Test.sol";
+import {TokenPaymaster} from "../../src/paymaster/TokenPaymaster.sol";
+import {MockToken} from "../../src/token/MockToken.sol";
+import {PackedUserOperation} from "@account-abstraction/interfaces/PackedUserOperation.sol";
 import {IPaymaster} from "@account-abstraction/interfaces/IPaymaster.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 
@@ -14,20 +14,14 @@ interface IAggregatorV3Local {
     function latestRoundData()
         external
         view
-        returns (
-            uint80 roundId,
-            int256 answer,
-            uint256 startedAt,
-            uint256 updatedAt,
-            uint80 answeredInRound
-        );
+        returns (uint80 roundId, int256 answer, uint256 startedAt, uint256 updatedAt, uint80 answeredInRound);
 }
 
 contract PaymasterHardcoreFuzz is Test {
     TokenPaymaster public paymaster;
     TokenPaymaster public implementation;
     MockToken public gasToken;
-    
+
     // Gunakan makeAddr untuk address yang lebih clean dan valid secara checksum
     address public entryPoint = makeAddr("entryPoint");
     address public oracle = makeAddr("oracle");
@@ -46,33 +40,24 @@ contract PaymasterHardcoreFuzz is Test {
 
         // 2. Setup Mock Token & Oracle
         gasToken = new MockToken("GasToken", "GT", 1000e18, address(this));
-        
+
         // Mock decimals oracle (biasanya 8 untuk Chainlink USD pairs)
-        vm.mockCall(
-            oracle,
-            abi.encodeWithSelector(IAggregatorV3Local.decimals.selector),
-            abi.encode(uint8(8))
-        );
+        vm.mockCall(oracle, abi.encodeWithSelector(IAggregatorV3Local.decimals.selector), abi.encode(uint8(8)));
         _mockOraclePrice(3000 * 1e8);
 
         // 3. Deploy via Proxy (Fix InvalidInitialization)
         implementation = new TokenPaymaster();
-        
-        bytes memory initData = abi.encodeWithSelector(
-            TokenPaymaster.initialize.selector,
-            address(gasToken),
-            entryPoint,
-            oracle,
-            owner
-        );
+
+        bytes memory initData =
+            abi.encodeWithSelector(TokenPaymaster.initialize.selector, address(gasToken), entryPoint, oracle, owner);
 
         ERC1967Proxy proxy = new ERC1967Proxy(address(implementation), initData);
         paymaster = TokenPaymaster(payable(address(proxy)));
-        
+
         // 4. Funding
         vm.deal(address(paymaster), 100 ether);
         vm.deal(owner, 100 ether);
-        
+
         // Deposit ke EntryPoint via Paymaster
         vm.prank(owner);
         paymaster.deposit{value: 10 ether}();
@@ -94,10 +79,10 @@ contract PaymasterHardcoreFuzz is Test {
         _mockOraclePrice(badPrice);
 
         PackedUserOperation memory userOp = _setupUserOp(user);
-        
+
         vm.prank(entryPoint);
         // Kita expect revert karena harga dari oracle tidak valid (<= 0)
-        vm.expectRevert(); 
+        vm.expectRevert();
         paymaster.validatePaymasterUserOp(userOp, bytes32(0), 1e15);
     }
 
@@ -105,24 +90,24 @@ contract PaymasterHardcoreFuzz is Test {
      * @dev STRICT TEST 2: Math Precision & Dust Attack
      */
     function testFuzz_MathPrecisionDust(uint256 markup) public {
-        markup = bound(markup, 100, 10000); 
-        
+        markup = bound(markup, 100, 10000);
+
         vm.prank(owner);
         paymaster.setGasMarkup(markup);
 
-        uint256 tinyGas = 1; 
+        uint256 tinyGas = 1;
         uint256 maxCost = 1e15; // 0.001 ETH
-        
+
         gasToken.mint(user, 1e30);
         vm.prank(user);
         gasToken.approve(address(paymaster), type(uint256).max);
 
         vm.prank(entryPoint);
-        (bytes memory context, ) = paymaster.validatePaymasterUserOp(_setupUserOp(user), bytes32(0), maxCost);
-        
+        (bytes memory context,) = paymaster.validatePaymasterUserOp(_setupUserOp(user), bytes32(0), maxCost);
+
         vm.prank(entryPoint);
         paymaster.postOp(IPaymaster.PostOpMode.opSucceeded, context, tinyGas, 0);
-        
+
         assertTrue(gasToken.balanceOf(address(paymaster)) >= 0);
     }
 
@@ -131,17 +116,17 @@ contract PaymasterHardcoreFuzz is Test {
      */
     function testFuzz_StrictPostOpRevertHandling(uint256 actualGas) public {
         actualGas = bound(actualGas, 0, 1e15);
-        
+
         gasToken.mint(user, 1e30);
         vm.prank(user);
         gasToken.approve(address(paymaster), type(uint256).max);
-        
+
         vm.prank(entryPoint);
-        (bytes memory context, ) = paymaster.validatePaymasterUserOp(_setupUserOp(user), bytes32(0), 1e15);
+        (bytes memory context,) = paymaster.validatePaymasterUserOp(_setupUserOp(user), bytes32(0), 1e15);
 
         vm.prank(entryPoint);
         paymaster.postOp(IPaymaster.PostOpMode.postOpReverted, context, actualGas, 0);
-        
+
         assertTrue(gasToken.balanceOf(address(paymaster)) > 0);
     }
 
@@ -151,7 +136,7 @@ contract PaymasterHardcoreFuzz is Test {
     function testFuzz_MarkupIntegrity(uint256 lowMarkup) public {
         vm.assume(lowMarkup < 100);
         vm.prank(owner);
-        vm.expectRevert(); 
+        vm.expectRevert();
         paymaster.setGasMarkup(lowMarkup);
     }
 

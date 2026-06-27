@@ -31,9 +31,21 @@
 
 The following contracts are deployed and verified on the Sepolia network:
 
-- **EntryPoint:** `0x08aAB491efE130f7760412c5708602A03d85feD0`
-- **SmartAccountFactory:** `0x23d67D5b1F62A98601eE7A4bE7d69a2963b0a9Ad`
-- **Paymaster Proxy:** `0xeCd6220145236CBA1a3e9bA47A53726b3F41D779`
+### Core Infrastructure
+| Contract | Address | Link |
+| :--- | :--- | :--- |
+| **EntryPoint** | `0xc1F7d70229c2d3dAd694af874EfD5dbD746A5E36` | [Etherscan](https://sepolia.etherscan.io/address/0xc1f7d70229c2d3dad694af874efd5dbd746a5e36) |
+| **SmartAccountFactory** | `0xEb4815A57E6d8Dc423E8aAE5213b685dd526c795` | [Etherscan](https://sepolia.etherscan.io/address/0xeb4815a57e6d8dc423e8aae5213b685dd526c795) |
+| **Paymaster Proxy** | `0x198DD07F93a4D4DA7f8Df085221cc4ec05099496` | [Etherscan](https://sepolia.etherscan.io/address/0x198dd07f93a4d4da7f8df085221cc4ec05099496) |
+
+### Supported Mock Tokens (for Testing)
+| Asset | Address |
+| :--- | :--- |
+| **BTC (Mock)** | `0x883d0ceEb9ABbfd4Dba80305CBC8A6aaa9E76161` |
+| **ETH (Mock)** | `0xD13a701dc4E06370586ce67856e588C7440aBd4d` |
+| **USDT (Mock)** | `0xcd57f9BC91413Dee20f542F3977cb21a06B30c0a` |
+| **SOL (Mock)** | `0x52c28816CaDc3c58Ec8fA360Dec0A947A746928B` |
+| **ADA (Mock)** | `0x84f09287552185aB9e5d43c3880C7a27083CB309` |
 
 ---
 
@@ -43,7 +55,20 @@ The following contracts are deployed and verified on the Sepolia network:
 Ensure you have [Foundry](https://book.getfoundry.sh/getting-started/installation) installed.
 
 ### Setup & Installation
+
+Dependencies are managed as **git submodules** under `Contracts/lib/` (forge-std,
+OpenZeppelin contracts + upgradeable, Chainlink, and eth-infinitism/account-abstraction).
+Pinned versions are recorded in `foundry.lock`.
+
 ```bash
-git clone [https://github.com/ActualRML/AAApps.git](https://github.com/ActualRML/AAApps.git)
-cd AAApps/contracts
-forge install
+# 1. Clone the repo together with its submodules
+git clone --recursive https://github.com/ActualRML/AAApps.git
+cd AAApps/Contracts
+
+# If you already cloned without --recursive, fetch the submodules:
+git submodule update --init --recursive
+
+# 2. Build and test
+forge build
+forge test
+```
